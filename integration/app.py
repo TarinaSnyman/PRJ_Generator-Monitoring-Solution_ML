@@ -32,10 +32,14 @@ def fetch_influx_data(air_id: str, start="-1m") -> pd.DataFrame:
     query_api = client.query_api()
 
     query = f'''
-    from(bucket:"{INFLUX_BUCKET}")
-      |> range(start: {start})
-      |> filter(fn: (r) => r["air_id"] == "{air_id}")
-      |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+        from(bucket: "RT_Data")
+        |> range(start: -1h)   // last hour, adjust as needed
+        |> filter(fn: (r) => r._measurement == "Epi")
+        |> pivot(
+            rowKey: ["_time"],
+            columnKey: ["_field"],
+            valueColumn: "_value"
+        )
     '''
     df = query_api.query_data_frame(query)
     df['time'] = pd.to_datetime(df['_time'], errors='coerce')
