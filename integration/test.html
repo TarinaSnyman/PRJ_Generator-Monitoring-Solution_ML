@@ -25,19 +25,19 @@ pre { background: #f4f4f4; padding: 10px; border: 1px solid #ddd; max-height: 30
 
 <h3>2. Fetch Raw Data (DB connection)</h3>
 <label>AIR ID:</label>
-<input type="text" id="fetchAir" value="12318">
+<input type="text" id="fetchAir" value="Epi">
 <button onclick="callFetchData()">Fetch Data</button>
 <pre id="fetchResult"></pre>
 
 <h3>3. Feature Engineering Test</h3>
 <label>AIR ID:</label>
-<input type="text" id="featureAir" value="12318">
+<input type="text" id="featureAir" value="Epi">
 <button onclick="callFeatures()">Test Features</button>
 <pre id="featureResult"></pre>
 
 <h3>4. Predict Latest (DB → Features → Model)</h3>
 <label>AIR ID:</label>
-<input type="text" id="predictAir" value="12318">
+<input type="text" id="predictAir" value="Epi">
 <button onclick="callPredictLatest()">Predict Latest</button>
 <div id="predictAlert"></div>
 <pre id="predictResult"></pre>
@@ -60,7 +60,7 @@ pre { background: #f4f4f4; padding: 10px; border: 1px solid #ddd; max-height: 30
 <pre id="predictPostResult"></pre>
 
 <script>
-const serverUrl = "http://http://127.0.0.1:5500"; // replace <server-ip> with your server IP
+const serverUrl = "http://127.0.0.1:8000"; // replace <server-ip> with your server IP
 
 function getHeaders() {
     return { "x-api-key": document.getElementById("apiKey").value };

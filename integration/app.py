@@ -6,8 +6,18 @@ import pandas as pd
 from influxdb_client import InfluxDBClient
 from feature_engineering import feature_engineering_dispatcher
 
-# setup FastAPI 
-app = FastAPI(title="Anomaly Detection API")
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # for testing, allow all origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # load model
 model= joblib.load("../Models/xgboost_12318.pkl")
