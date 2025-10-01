@@ -89,6 +89,17 @@ def predict_post(data: DataPoint, x_api_key: str = Header(None)):
 
     return {"anomaly": int(pred), "probability": float(prob), "air_id": data.air_id}
 
+# placeholder RUL endpoint
+@app.get("/predict_rul")
+def predict_rul(air_id: str, x_api_key: str = Header(None)):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # TODO: replace with actual model logic later
+    rul_value = 120  # example RUL in hours
+
+    return {"air_id": air_id, "rul_hours": rul_value}
+
 # Health check endpoint
 @app.get("/health")
 def health_check():

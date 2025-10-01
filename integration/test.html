@@ -2,11 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Anomaly Detection API Tester</title>
+<title>Anomaly Detection Dashboard</title>
 <style>
 body { font-family: Arial, sans-serif; margin: 20px; }
-input, button, textarea { margin: 5px 0; padding: 5px; }
-textarea { width: 100%; height: 200px; margin-top: 10px; }
+input, button { margin: 5px 0; padding: 5px; }
 pre { background: #f4f4f4; padding: 10px; border: 1px solid #ddd; max-height: 300px; overflow:auto; }
 .alert { font-weight: bold; padding: 10px; margin: 10px 0; border-radius: 4px; }
 .ok { background: #d4edda; color: #155724; }
@@ -14,7 +13,7 @@ pre { background: #f4f4f4; padding: 10px; border: 1px solid #ddd; max-height: 30
 </style>
 </head>
 <body>
-<h2>🚀 Anomaly Detection API Tester</h2>
+<h2> Generator Monitoring Integration Testing</h2>
 
 <label>API Key:</label>
 <input type="text" id="apiKey" value="key123456">
@@ -35,32 +34,17 @@ pre { background: #f4f4f4; padding: 10px; border: 1px solid #ddd; max-height: 30
 <button onclick="callFeatures()">Test Features</button>
 <pre id="featureResult"></pre>
 
-<h3>4. Predict Latest (DB → Features → Model)</h3>
+<h3>4. Real-Time Status (Anomaly & RUL)</h3>
 <label>AIR ID:</label>
 <input type="text" id="predictAir" value="Epi">
-<button onclick="callPredictLatest()">Predict Latest</button>
-<div id="predictAlert"></div>
-<pre id="predictResult"></pre>
-
-<h3>5. Predict POST (Manual Features)</h3>
-<label>JSON Features:</label>
-<textarea id="postData">
-{
-  "air_id": "12318",
-  "features": {
-    "ptot_W": 100,
-    "ia_A": 1.2,
-    "ib_A": 1.1,
-    "ic_A": 1.0
-  }
-}
-</textarea>
-<button onclick="callPredictPost()">Predict POST</button>
-<div id="predictPostAlert"></div>
-<pre id="predictPostResult"></pre>
+<div id="statusBlock">
+    <div id="predictAlert"></div>
+    <pre id="predictResult"></pre>
+    <div id="rulResult" style="font-weight:bold; font-size:1.2em;"></div>
+</div>
 
 <script>
-const serverUrl = "http://127.0.0.1:8000"; // replace <server-ip> with your server IP
+const serverUrl = "http://127.0.0.1:8000"; // replace with your server IP if needed
 
 function getHeaders() {
     return { "x-api-key": document.getElementById("apiKey").value };
@@ -72,6 +56,7 @@ function showAlert(id, message, isError=false) {
     div.innerText = message;
 }
 
+// Health check
 function callHealth() {
     fetch(`${serverUrl}/health`)
         .then(res => res.json())
@@ -79,26 +64,29 @@ function callHealth() {
             document.getElementById("healthResult").innerText = JSON.stringify(data, null, 2);
             showAlert("healthResult", "✅ Server healthy, model loaded: " + data.model_loaded);
         })
-        .catch(err => document.getElementById("healthResult").innerText = err);
+        .catch(err => showAlert("healthResult", "❌ Error fetching health", true));
 }
 
+// Fetch raw DB data
 function callFetchData() {
     const air = document.getElementById("fetchAir").value;
     fetch(`${serverUrl}/fetch_data?air_id=${air}`, { headers: getHeaders() })
         .then(res => res.json())
         .then(data => document.getElementById("fetchResult").innerText = JSON.stringify(data, null, 2))
-        .catch(err => document.getElementById("fetchResult").innerText = err);
+        .catch(err => document.getElementById("fetchResult").innerText = "Error fetching data");
 }
 
+// Feature engineering test
 function callFeatures() {
     const air = document.getElementById("featureAir").value;
     fetch(`${serverUrl}/test_features?air_id=${air}`, { headers: getHeaders() })
         .then(res => res.json())
         .then(data => document.getElementById("featureResult").innerText = JSON.stringify(data, null, 2))
-        .catch(err => document.getElementById("featureResult").innerText = err);
+        .catch(err => document.getElementById("featureResult").innerText = "Error during feature engineering");
 }
 
-function callPredictLatest() {
+// Predict latest anomaly
+function updatePredictLatest() {
     const air = document.getElementById("predictAir").value;
     fetch(`${serverUrl}/predict_latest?air_id=${air}`, { headers: getHeaders() })
         .then(res => res.json())
@@ -110,27 +98,27 @@ function callPredictLatest() {
                 showAlert("predictAlert", "✅ No anomaly detected. Probability: " + data.probability.toFixed(3));
             }
         })
-        .catch(err => document.getElementById("predictResult").innerText = err);
+        .catch(err => document.getElementById("predictResult").innerText = "Error fetching anomaly");
 }
 
-function callPredictPost() {
-    const payload = JSON.parse(document.getElementById("postData").value);
-    fetch(`${serverUrl}/predict`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...getHeaders() },
-        body: JSON.stringify(payload)
-    })
-    .then(res => res.json())
-    .then(data => {
-        document.getElementById("predictPostResult").innerText = JSON.stringify(data, null, 2);
-        if (data.anomaly === 1) {
-            showAlert("predictPostAlert", "🚨 Anomaly detected! Probability: " + data.probability.toFixed(3));
-        } else {
-            showAlert("predictPostAlert", "✅ No anomaly detected. Probability: " + data.probability.toFixed(3));
-        }
-    })
-    .catch(err => document.getElementById("predictPostResult").innerText = err);
+// Predict RUL
+function updateRUL() {
+    const air = document.getElementById("predictAir").value;
+    fetch(`${serverUrl}/predict_rul?air_id=${air}`, { headers: getHeaders() })
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById("rulResult").innerText = `RUL: ${data.rul_hours} hours`;
+        })
+        .catch(err => document.getElementById("rulResult").innerText = "Error fetching RUL");
 }
+
+// Auto-update every 2 minutes
+setInterval(updatePredictLatest, 120000);
+setInterval(updateRUL, 120000);
+
+// Optional: run immediately on page load
+updatePredictLatest();
+updateRUL();
 </script>
 </body>
 </html>
