@@ -22,48 +22,82 @@ def map_influx_to_model_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def feature_engineering_air12318(df: pd.DataFrame) -> pd.DataFrame:
-    
-    # ON/OFF detection 
-    p = df['ptot_W'].clip(lower=0).fillna(0)
-    X = np.log1p(p).values.reshape(-1,1)
-    gmm = GaussianMixture(n_components=2, random_state=42).fit(X)
-    labels = gmm.predict(X)
-    means = gmm.means_.flatten()
-    on_cluster = np.argmax(means)
-    df['is_running_gmm'] = (labels == on_cluster).astype(int)
+    df = df.copy()
 
-    df['any_current'] = df[['ia_A','ib_A','ic_A']].sum(axis=1) > 0.1
-    df['is_running'] = ((df['is_running_gmm']==1) | df['any_current']).astype(int)
+    # ON/OFF detection
+    if "ptot_W" in df.columns:
+        p = df["ptot_W"].clip(lower=0).fillna(0)
+        X = np.log1p(p).values.reshape(-1, 1)
+        try:
+            gmm = GaussianMixture(n_components=2, random_state=42).fit(X)
+            labels = gmm.predict(X)
+            means = gmm.means_.flatten()
+            on_cluster = np.argmax(means)
+            df["is_running_gmm"] = (labels == on_cluster).astype(int)
+        except Exception:
+            df["is_running_gmm"] = 0
+    else:
+        df["is_running_gmm"] = 0
 
-    # Filter ON cycles
-    df_on = df[df['is_running']==1].copy()
+    # any current present
+    current_cols = [c for c in ["ia_A", "ib_A", "ic_A"] if c in df.columns]
+    if current_cols:
+        df["any_current"] = df[current_cols].sum(axis=1) > 0.1
+    else:
+        df["any_current"] = 0
 
-    # Feature engineering 
-    if all(col in df_on.columns for col in ['ia_A','ib_A','ic_A']):
-        df_on['current_imbalance'] = df_on[['ia_A','ib_A','ic_A']].std(axis=1)
+    # final is_running flag
+    df["is_running"] = ((df["is_running_gmm"] == 1) | (df["any_current"] == 1)).astype(int)
 
-    if 'pftot_None' in df_on.columns:
-        df_on['pf_anomaly'] = np.abs(1 - df_on['pftot_None'])
 
-    temp_cols = [c for c in df_on.columns if 'temp' in c.lower()]
+# Feature engineering
+    # Current imbalance
+    if len(current_cols) == 3:
+        df["current_imbalance"] = df[current_cols].std(axis=1)
+    else:
+        df["current_imbalance"] = 0
+
+    # PF anomaly
+    if "pftot_None" in df.columns:
+        df["pf_anomaly"] = np.abs(1 - df["pftot_None"])
+    else:
+        df["pf_anomaly"] = 0
+
+    # Temperature rate-of-change
+    temp_cols = [c for c in df.columns if "temp" in c.lower()]
     for col in temp_cols:
-        df_on[f'{col}_roc'] = df_on[col].diff()
+        df[f"{col}_roc"] = df[col].diff().fillna(0)
 
-    fuel_cols = [c for c in df_on.columns if 'fuel' in c.lower()]
+    # Fuel rate-of-change
+    fuel_cols = [c for c in df.columns if "fuel" in c.lower()]
     for col in fuel_cols:
-        df_on[f'{col}_roc'] = df_on[col].diff()
+        df[f"{col}_roc"] = df[col].diff().fillna(0)
 
+    # Rolling statistics (use is_running mask so it only applies while running)
     rolling_window = 60
-    for col in ['ptot_W','ia_A','pf_anomaly']:
-        if col in df_on.columns:
-            df_on[f'{col}_rollmean'] = df_on[col].rolling(window=rolling_window, min_periods=1).mean()
-            df_on[f'{col}_rollstd']  = df_on[col].rolling(window=rolling_window, min_periods=1).std()
+    for col in ["ptot_W", "ia_A", "pf_anomaly"]:
+        if col in df.columns:
+            df[f"{col}_rollmean"] = (
+                df[col].where(df["is_running"] == 1)
+                .rolling(window=rolling_window, min_periods=1)
+                .mean()
+                .fillna(0)
+            )
+            df[f"{col}_rollstd"] = (
+                df[col].where(df["is_running"] == 1)
+                .rolling(window=rolling_window, min_periods=1)
+                .std()
+                .fillna(0)
+            )
+        else:
+            df[f"{col}_rollmean"] = 0
+            df[f"{col}_rollstd"] = 0
+    # Cleanup & feature selection
+    exclude_cols = ["time", "iforest_anomaly", "heuristic_anomaly"]
+    feature_cols = [c for c in df.columns if c not in exclude_cols]
 
-    # Select feature columns 
-    exclude_cols = ['time','is_running','iforest_anomaly','heuristic_anomaly']
-    feature_cols = [c for c in df_on.columns if c not in exclude_cols]
+    return df[feature_cols]
 
-    return df_on[feature_cols]
 
 
 # eventually other air feature engineering

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Anomaly Detection Dashboard</title>
+<title>Anomaly & RUL Monitoring Dashboard</title>
 <style>
 body { font-family: Arial, sans-serif; margin: 20px; }
 input, button { margin: 5px 0; padding: 5px; }
@@ -13,7 +13,7 @@ pre { background: #f4f4f4; padding: 10px; border: 1px solid #ddd; max-height: 30
 </style>
 </head>
 <body>
-<h2> Generator Monitoring Integration Testing</h2>
+<h2>Generator Monitoring Dashboard</h2>
 
 <label>API Key:</label>
 <input type="text" id="apiKey" value="key123456">
@@ -22,29 +22,38 @@ pre { background: #f4f4f4; padding: 10px; border: 1px solid #ddd; max-height: 30
 <button onclick="callHealth()">Check Health</button>
 <pre id="healthResult"></pre>
 
-<h3>2. Fetch Raw Data (DB connection)</h3>
+<h3>2. DB Connection Test</h3>
+<button onclick="callDBConnection()">Test DB Connection</button>
+<pre id="dbResult"></pre>
+
+<h3>3. Fetch Raw Data</h3>
 <label>AIR ID:</label>
 <input type="text" id="fetchAir" value="Epi">
 <button onclick="callFetchData()">Fetch Data</button>
 <pre id="fetchResult"></pre>
 
-<h3>3. Feature Engineering Test</h3>
+<h3>4. Feature Engineering Test</h3>
 <label>AIR ID:</label>
 <input type="text" id="featureAir" value="Epi">
 <button onclick="callFeatures()">Test Features</button>
 <pre id="featureResult"></pre>
 
-<h3>4. Real-Time Status (Anomaly & RUL)</h3>
+<h3>5. Anomaly Detection (XGBoost)</h3>
 <label>AIR ID:</label>
-<input type="text" id="predictAir" value="Epi">
-<div id="statusBlock">
-    <div id="predictAlert"></div>
-    <pre id="predictResult"></pre>
-    <div id="rulResult" style="font-weight:bold; font-size:1.2em;"></div>
-</div>
+<input type="text" id="anomalyAir" value="Epi">
+<button onclick="updateAnomaly()">Predict Anomaly</button>
+<div id="anomalyAlert"></div>
+<pre id="anomalyResult"></pre>
+
+<h3>6. RUL Prediction</h3>
+<label>AIR ID:</label>
+<input type="text" id="rulAir" value="Epi">
+<button onclick="updateRUL()">Predict RUL</button>
+<div id="rulAlert"></div>
+<pre id="rulResult"></pre>
 
 <script>
-const serverUrl = "http://127.0.0.1:8000"; // replace with your server IP if needed
+const serverUrl = "http://192.168.2.106:8000"; // your server IP
 
 function getHeaders() {
     return { "x-api-key": document.getElementById("apiKey").value };
@@ -62,18 +71,32 @@ function callHealth() {
         .then(res => res.json())
         .then(data => {
             document.getElementById("healthResult").innerText = JSON.stringify(data, null, 2);
-            showAlert("healthResult", "✅ Server healthy, model loaded: " + data.model_loaded);
+            showAlert("healthResult", "✅ Server healthy, anomaly model loaded: " + data.anomaly_model_loaded);
         })
         .catch(err => showAlert("healthResult", "❌ Error fetching health", true));
 }
 
-// Fetch raw DB data
+// DB connection
+function callDBConnection() {
+    fetch(`${serverUrl}/test_db_connection`, { headers: getHeaders() })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === "ok") {
+                document.getElementById("dbResult").innerText = `✅ DB connected! Rows returned: ${data.rows_returned}`;
+            } else {
+                document.getElementById("dbResult").innerText = `❌ DB connection failed: ${data.error}`;
+            }
+        })
+        .catch(err => document.getElementById("dbResult").innerText = "❌ Error connecting to DB");
+}
+
+// Fetch raw data
 function callFetchData() {
     const air = document.getElementById("fetchAir").value;
     fetch(`${serverUrl}/fetch_data?air_id=${air}`, { headers: getHeaders() })
         .then(res => res.json())
         .then(data => document.getElementById("fetchResult").innerText = JSON.stringify(data, null, 2))
-        .catch(err => document.getElementById("fetchResult").innerText = "Error fetching data");
+        .catch(err => document.getElementById("fetchResult").innerText = "❌ Error fetching data");
 }
 
 // Feature engineering test
@@ -81,44 +104,54 @@ function callFeatures() {
     const air = document.getElementById("featureAir").value;
     fetch(`${serverUrl}/test_features?air_id=${air}`, { headers: getHeaders() })
         .then(res => res.json())
-        .then(data => document.getElementById("featureResult").innerText = JSON.stringify(data, null, 2))
-        .catch(err => document.getElementById("featureResult").innerText = "Error during feature engineering");
-}
-
-// Predict latest anomaly
-function updatePredictLatest() {
-    const air = document.getElementById("predictAir").value;
-    fetch(`${serverUrl}/predict_latest?air_id=${air}`, { headers: getHeaders() })
-        .then(res => res.json())
         .then(data => {
-            document.getElementById("predictResult").innerText = JSON.stringify(data, null, 2);
-            if (data.anomaly === 1) {
-                showAlert("predictAlert", "🚨 Anomaly detected! Probability: " + data.probability.toFixed(3));
+            if (data.detail) {
+                document.getElementById("featureResult").innerText = `❌ ${data.detail}`;
             } else {
-                showAlert("predictAlert", "✅ No anomaly detected. Probability: " + data.probability.toFixed(3));
+                document.getElementById("featureResult").innerText = JSON.stringify(data, null, 2);
             }
         })
-        .catch(err => document.getElementById("predictResult").innerText = "Error fetching anomaly");
+        .catch(err => document.getElementById("featureResult").innerText = "❌ Error during feature engineering");
 }
 
-// Predict RUL
+// Anomaly prediction
+function updateAnomaly() {
+    const air = document.getElementById("anomalyAir").value;
+    fetch(`${serverUrl}/predict_anomaly?air_id=${air}`, { headers: getHeaders() })
+        .then(res => res.json())
+        .then(data => {
+            if (data.detail) {
+                document.getElementById("anomalyResult").innerText = `❌ ${data.detail}`;
+                showAlert("anomalyAlert", "❌ Error", true);
+            } else if (data.anomaly === null) {
+                document.getElementById("anomalyResult").innerText = data.message;
+                showAlert("anomalyAlert", "⚠️ No new data", true);
+            } else {
+                document.getElementById("anomalyResult").innerText = JSON.stringify(data, null, 2);
+                if (data.anomaly === 1) {
+                    showAlert("anomalyAlert", "🚨 Anomaly detected! Probability: " + data.probability.toFixed(3));
+                } else {
+                    showAlert("anomalyAlert", "✅ No anomaly detected. Probability: " + data.probability.toFixed(3));
+                }
+            }
+        })
+        .catch(err => document.getElementById("anomalyResult").innerText = "❌ Error fetching anomaly");
+}
+
+// RUL prediction
 function updateRUL() {
-    const air = document.getElementById("predictAir").value;
+    const air = document.getElementById("rulAir").value;
     fetch(`${serverUrl}/predict_rul?air_id=${air}`, { headers: getHeaders() })
         .then(res => res.json())
         .then(data => {
             document.getElementById("rulResult").innerText = `RUL: ${data.rul_hours} hours`;
+            showAlert("rulAlert", "✅ RUL fetched successfully");
         })
-        .catch(err => document.getElementById("rulResult").innerText = "Error fetching RUL");
+        .catch(err => {
+            document.getElementById("rulResult").innerText = "❌ Error fetching RUL";
+            showAlert("rulAlert", "❌ Error", true);
+        });
 }
-
-// Auto-update every 2 minutes
-setInterval(updatePredictLatest, 120000);
-setInterval(updateRUL, 120000);
-
-// Optional: run immediately on page load
-updatePredictLatest();
-updateRUL();
 </script>
 </body>
 </html>
