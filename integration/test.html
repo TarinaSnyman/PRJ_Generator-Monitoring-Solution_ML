@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Anomaly Detection API Tester</title>
+<style>
+body { font-family: Arial, sans-serif; margin: 20px; }
+input, button, textarea { margin: 5px 0; padding: 5px; }
+textarea { width: 100%; height: 200px; margin-top: 10px; }
+pre { background: #f4f4f4; padding: 10px; border: 1px solid #ddd; max-height: 300px; overflow:auto; }
+.alert { font-weight: bold; padding: 10px; margin: 10px 0; border-radius: 4px; }
+.ok { background: #d4edda; color: #155724; }
+.error { background: #f8d7da; color: #721c24; }
+</style>
+</head>
+<body>
+<h2>🚀 Anomaly Detection API Tester</h2>
+
+<label>API Key:</label>
+<input type="text" id="apiKey" value="key123456">
+
+<h3>1. Health Check</h3>
+<button onclick="callHealth()">Check Health</button>
+<pre id="healthResult"></pre>
+
+<h3>2. Fetch Raw Data (DB connection)</h3>
+<label>AIR ID:</label>
+<input type="text" id="fetchAir" value="12318">
+<button onclick="callFetchData()">Fetch Data</button>
+<pre id="fetchResult"></pre>
+
+<h3>3. Feature Engineering Test</h3>
+<label>AIR ID:</label>
+<input type="text" id="featureAir" value="12318">
+<button onclick="callFeatures()">Test Features</button>
+<pre id="featureResult"></pre>
+
+<h3>4. Predict Latest (DB → Features → Model)</h3>
+<label>AIR ID:</label>
+<input type="text" id="predictAir" value="12318">
+<button onclick="callPredictLatest()">Predict Latest</button>
+<div id="predictAlert"></div>
+<pre id="predictResult"></pre>
+
+<h3>5. Predict POST (Manual Features)</h3>
+<label>JSON Features:</label>
+<textarea id="postData">
+{
+  "air_id": "12318",
+  "features": {
+    "ptot_W": 100,
+    "ia_A": 1.2,
+    "ib_A": 1.1,
+    "ic_A": 1.0
+  }
+}
+</textarea>
+<button onclick="callPredictPost()">Predict POST</button>
+<div id="predictPostAlert"></div>
+<pre id="predictPostResult"></pre>
+
+<script>
+const serverUrl = "http://http://127.0.0.1:5500"; // replace <server-ip> with your server IP
+
+function getHeaders() {
+    return { "x-api-key": document.getElementById("apiKey").value };
+}
+
+function showAlert(id, message, isError=false) {
+    const div = document.getElementById(id);
+    div.className = "alert " + (isError ? "error" : "ok");
+    div.innerText = message;
+}
+
+function callHealth() {
+    fetch(`${serverUrl}/health`)
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById("healthResult").innerText = JSON.stringify(data, null, 2);
+            showAlert("healthResult", "✅ Server healthy, model loaded: " + data.model_loaded);
+        })
+        .catch(err => document.getElementById("healthResult").innerText = err);
+}
+
+function callFetchData() {
+    const air = document.getElementById("fetchAir").value;
+    fetch(`${serverUrl}/fetch_data?air_id=${air}`, { headers: getHeaders() })
+        .then(res => res.json())
+        .then(data => document.getElementById("fetchResult").innerText = JSON.stringify(data, null, 2))
+        .catch(err => document.getElementById("fetchResult").innerText = err);
+}
+
+function callFeatures() {
+    const air = document.getElementById("featureAir").value;
+    fetch(`${serverUrl}/test_features?air_id=${air}`, { headers: getHeaders() })
+        .then(res => res.json())
+        .then(data => document.getElementById("featureResult").innerText = JSON.stringify(data, null, 2))
+        .catch(err => document.getElementById("featureResult").innerText = err);
+}
+
+function callPredictLatest() {
+    const air = document.getElementById("predictAir").value;
+    fetch(`${serverUrl}/predict_latest?air_id=${air}`, { headers: getHeaders() })
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById("predictResult").innerText = JSON.stringify(data, null, 2);
+            if (data.anomaly === 1) {
+                showAlert("predictAlert", "🚨 Anomaly detected! Probability: " + data.probability.toFixed(3));
+            } else {
+                showAlert("predictAlert", "✅ No anomaly detected. Probability: " + data.probability.toFixed(3));
+            }
+        })
+        .catch(err => document.getElementById("predictResult").innerText = err);
+}
+
+function callPredictPost() {
+    const payload = JSON.parse(document.getElementById("postData").value);
+    fetch(`${serverUrl}/predict`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getHeaders() },
+        body: JSON.stringify(payload)
+    })
+    .then(res => res.json())
+    .then(data => {
+        document.getElementById("predictPostResult").innerText = JSON.stringify(data, null, 2);
+        if (data.anomaly === 1) {
+            showAlert("predictPostAlert", "🚨 Anomaly detected! Probability: " + data.probability.toFixed(3));
+        } else {
+            showAlert("predictPostAlert", "✅ No anomaly detected. Probability: " + data.probability.toFixed(3));
+        }
+    })
+    .catch(err => document.getElementById("predictPostResult").innerText = err);
+}
+</script>
+</body>
+</html>

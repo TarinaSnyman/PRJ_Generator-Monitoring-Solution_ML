@@ -10,7 +10,7 @@ from feature_engineering import feature_engineering_dispatcher
 app = FastAPI(title="Anomaly Detection API")
 
 # load model
-model= joblib.load("../Models/xgboost_12318.plk")
+model= joblib.load("../Models/xgboost_12318.pkl")
 
 # API Key for basic authentication 
 API_KEY = "key123456" # hardcoded for now
@@ -24,7 +24,7 @@ INFLUX_BUCKET = "RT_Data"
 # data model for optional POST requests 
 class DataPoint(BaseModel):
     air_id: str
-    features: dict  # raw sensor values if sending directly
+    features: dict  
 
 # helper function to fetch raw data from Influx 
 def fetch_influx_data(air_id: str, start="-1m") -> pd.DataFrame:

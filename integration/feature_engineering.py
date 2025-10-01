@@ -3,12 +3,27 @@ import pandas as pd
 import numpy as np
 from sklearn.mixture import GaussianMixture
 
+# helper function to map raw influx columns to model features 
+def map_influx_to_model_columns(df: pd.DataFrame) -> pd.DataFrame:
+    column_mapping = {
+        'ia':'ia_A', 'ib':'ib_A', 'ic':'ic_A',
+        'ptot':'ptot_W', 'pftot':'pftot_None',
+        'va':'va_V', 'vb':'vb_V', 'vc':'vc_V',
+        'va-vb':'va-vb_V', 'vb-vc':'vb-vc_V', 'vc-va':'vc-va_V',
+        'pa':'pa_W', 'pb':'pb_W', 'pc':'pc_W',
+        'qa':'qa_Var', 'qb':'qb_Var', 'qc':'qc_Var',
+        'sa':'sa_VA', 'sb':'sb_VA', 'sc':'sc_VA',
+        'expwh':'expwh_Kwh*10', 'expvar':'expvar_Kvarh*10',
+        'freq':'freq_Hz*10', 'temp':'temp_Degrees Celsius',
+        'pressure':'pressure_Bar', 'fuel':'fuel_%', 'vbat':'vbat_V', 'hours':'hours_sec'
+    }
+    df = df.rename(columns=column_mapping)
+    return df
+
+
 def feature_engineering_air12318(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Performs ON/OFF detection and feature engineering for AIR 12318.
-    Returns a dataframe of engineered features ready for modeling.
-    """
-    # --- 1. ON/OFF detection ---
+    
+    # ON/OFF detection 
     p = df['ptot_W'].clip(lower=0).fillna(0)
     X = np.log1p(p).values.reshape(-1,1)
     gmm = GaussianMixture(n_components=2, random_state=42).fit(X)
@@ -23,7 +38,7 @@ def feature_engineering_air12318(df: pd.DataFrame) -> pd.DataFrame:
     # Filter ON cycles
     df_on = df[df['is_running']==1].copy()
 
-    # --- 2. Feature engineering ---
+    # Feature engineering 
     if all(col in df_on.columns for col in ['ia_A','ib_A','ic_A']):
         df_on['current_imbalance'] = df_on[['ia_A','ib_A','ic_A']].std(axis=1)
 
@@ -44,7 +59,7 @@ def feature_engineering_air12318(df: pd.DataFrame) -> pd.DataFrame:
             df_on[f'{col}_rollmean'] = df_on[col].rolling(window=rolling_window, min_periods=1).mean()
             df_on[f'{col}_rollstd']  = df_on[col].rolling(window=rolling_window, min_periods=1).std()
 
-    # --- 3. Select feature columns ---
+    # Select feature columns 
     exclude_cols = ['time','is_running','iforest_anomaly','heuristic_anomaly']
     feature_cols = [c for c in df_on.columns if c not in exclude_cols]
 
@@ -55,9 +70,11 @@ def feature_engineering_air12318(df: pd.DataFrame) -> pd.DataFrame:
 
 #dispatches the feture engineered dataset for each air
 def feature_engineering_dispatcher(df: pd.DataFrame, air_id: str) -> pd.DataFrame:
-    if air_id == "12318":
-        return feature_engineering_air12318(df)
-    # elif air_id == "56789":
-    #     return feature_engineering_air56789(df)
+    # map Influx columns to model features
+    df_mapped = map_influx_to_model_columns(df)
+    if air_id == "12318" or air_id=="Epi":
+        return feature_engineering_air12318(df_mapped)
+    # elif air_id == "":
+    #     return feature_engineering_air56789(df_mapped)
     else:
         raise ValueError(f"Feature engineering not defined for AIR {air_id}")
