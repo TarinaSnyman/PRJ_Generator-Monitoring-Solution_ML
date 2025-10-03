@@ -4,7 +4,7 @@ from pydantic import BaseModel
 import joblib
 import pandas as pd
 import tensorflow as tf
-from tensorflow.keras.models import load_model
+# from tensorflow.keras.models import load_model
 from influxdb_client import InfluxDBClient
 from feature_engineering import feature_engineering_dispatcher
 
@@ -23,7 +23,7 @@ app.add_middleware(
 
 # load model
 anomaly_model= joblib.load("../Models/xgboost_12318.plk")
-cnn_lstm_model = load_model("../Models/cnn_lstm_model.keras")
+# cnn_lstm_model = load_model("../Models/cnn_lstm_model.keras")
 
 # API Key for basic authentication 
 API_KEY = "key123456" # hardcoded for now
