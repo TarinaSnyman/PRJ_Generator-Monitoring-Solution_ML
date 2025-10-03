@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Anomaly & RUL Monitoring Dashboard</title>
+<style>
+body { font-family: Arial, sans-serif; margin: 20px; }
+input, button { margin: 5px 0; padding: 5px; }
+pre { background: #f4f4f4; padding: 10px; border: 1px solid #ddd; max-height: 300px; overflow:auto; }
+.alert { font-weight: bold; padding: 10px; margin: 10px 0; border-radius: 4px; }
+.ok { background: #d4edda; color: #155724; }
+.error { background: #f8d7da; color: #721c24; }
+</style>
+</head>
+<body>
+<h2>Generator Monitoring Dashboard</h2>
+
+<label>API Key:</label>
+<input type="text" id="apiKey" value="key123456">
+
+<h3>1. Health Check</h3>
+<button onclick="callHealth()">Check Health</button>
+<pre id="healthResult"></pre>
+
+<h3>2. DB Connection Test</h3>
+<button onclick="callDBConnection()">Test DB Connection</button>
+<pre id="dbResult"></pre>
+
+<h3>3. Fetch Raw Data</h3>
+<label>AIR ID:</label>
+<input type="text" id="fetchAir" value="Epi">
+<button onclick="callFetchData()">Fetch Data</button>
+<pre id="fetchResult"></pre>
+
+<h3>4. Feature Engineering Test</h3>
+<label>AIR ID:</label>
+<input type="text" id="featureAir" value="Epi">
+<button onclick="callFeatures()">Test Features</button>
+<pre id="featureResult"></pre>
+
+<h3>5. Anomaly Detection (XGBoost)</h3>
+<label>AIR ID:</label>
+<input type="text" id="anomalyAir" value="Epi">
+<button onclick="updateAnomaly()">Predict Anomaly</button>
+<div id="anomalyAlert"></div>
+<pre id="anomalyResult"></pre>
+
+<h3>6. RUL Prediction</h3>
+<label>AIR ID:</label>
+<input type="text" id="rulAir" value="Epi">
+<button onclick="updateRUL()">Predict RUL</button>
+<div id="rulAlert"></div>
+<pre id="rulResult"></pre>
+
+<script>
+const serverUrl = "http://192.168.2.106:8000"; // your server IP
+
+function getHeaders() {
+    return { "x-api-key": document.getElementById("apiKey").value };
+}
+
+function showAlert(id, message, isError=false) {
+    const div = document.getElementById(id);
+    div.className = "alert " + (isError ? "error" : "ok");
+    div.innerText = message;
+}
+
+// Health check
+function callHealth() {
+    fetch(`${serverUrl}/health`)
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById("healthResult").innerText = JSON.stringify(data, null, 2);
+            showAlert("healthResult", "✅ Server healthy, anomaly model loaded: " + data.anomaly_model_loaded);
+        })
+        .catch(err => showAlert("healthResult", "❌ Error fetching health", true));
+}
+
+// DB connection
+function callDBConnection() {
+    fetch(`${serverUrl}/test_db_connection`, { headers: getHeaders() })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === "ok") {
+                document.getElementById("dbResult").innerText = `✅ DB connected! Rows returned: ${data.rows_returned}`;
+            } else {
+                document.getElementById("dbResult").innerText = `❌ DB connection failed: ${data.error}`;
+            }
+        })
+        .catch(err => document.getElementById("dbResult").innerText = "❌ Error connecting to DB");
+}
+
+// Fetch raw data
+function callFetchData() {
+    const air = document.getElementById("fetchAir").value;
+    fetch(`${serverUrl}/fetch_data?air_id=${air}`, { headers: getHeaders() })
+        .then(res => res.json())
+        .then(data => document.getElementById("fetchResult").innerText = JSON.stringify(data, null, 2))
+        .catch(err => document.getElementById("fetchResult").innerText = "❌ Error fetching data");
+}
+
+// Feature engineering test
+function callFeatures() {
+    const air = document.getElementById("featureAir").value;
+    fetch(`${serverUrl}/test_features?air_id=${air}`, { headers: getHeaders() })
+        .then(res => res.json())
+        .then(data => {
+            if (data.detail) {
+                document.getElementById("featureResult").innerText = `❌ ${data.detail}`;
+            } else {
+                document.getElementById("featureResult").innerText = JSON.stringify(data, null, 2);
+            }
+        })
+        .catch(err => document.getElementById("featureResult").innerText = "❌ Error during feature engineering");
+}
+
+// Anomaly prediction
+function updateAnomaly() {
+    const air = document.getElementById("anomalyAir").value;
+    fetch(`${serverUrl}/predict_anomaly?air_id=${air}`, { headers: getHeaders() })
+        .then(res => res.json())
+        .then(data => {
+            if (data.detail) {
+                document.getElementById("anomalyResult").innerText = `❌ ${data.detail}`;
+                showAlert("anomalyAlert", "❌ Error", true);
+            } else if (data.anomaly === null) {
+                document.getElementById("anomalyResult").innerText = data.message;
+                showAlert("anomalyAlert", "⚠️ No new data", true);
+            } else {
+                document.getElementById("anomalyResult").innerText = JSON.stringify(data, null, 2);
+                if (data.anomaly === 1) {
+                    showAlert("anomalyAlert", "🚨 Anomaly detected! Probability: " + data.probability.toFixed(3));
+                } else {
+                    showAlert("anomalyAlert", "✅ No anomaly detected. Probability: " + data.probability.toFixed(3));
+                }
+            }
+        })
+        .catch(err => document.getElementById("anomalyResult").innerText = "❌ Error fetching anomaly");
+}
+
+// RUL prediction
+function updateRUL() {
+    const air = document.getElementById("rulAir").value;
+    fetch(`${serverUrl}/predict_rul?air_id=${air}`, { headers: getHeaders() })
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById("rulResult").innerText = `RUL: ${data.rul_hours} hours`;
+            showAlert("rulAlert", "✅ RUL fetched successfully");
+        })
+        .catch(err => {
+            document.getElementById("rulResult").innerText = "❌ Error fetching RUL";
+            showAlert("rulAlert", "❌ Error", true);
+        });
+}
+</script>
+</body>
+</html>
