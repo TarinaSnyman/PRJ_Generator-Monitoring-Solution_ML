@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Anomaly & RUL Monitoring Dashboard</title>
+<title>Anomaly & Failure Probability Dashboard</title>
 <style>
 body { font-family: Arial, sans-serif; margin: 20px; }
 input, button { margin: 5px 0; padding: 5px; }
@@ -45,10 +45,10 @@ pre { background: #f4f4f4; padding: 10px; border: 1px solid #ddd; max-height: 30
 <div id="anomalyAlert"></div>
 <pre id="anomalyResult"></pre>
 
-<h3>6. RUL Prediction</h3>
+<h3>6. Failure Probability Prediction (CNN-LSTM)</h3>
 <label>AIR ID:</label>
 <input type="text" id="rulAir" value="Epi">
-<button onclick="updateRUL()">Predict RUL</button>
+<button onclick="updateRUL()">Predict Failure Probabilities</button>
 <div id="rulAlert"></div>
 <pre id="rulResult"></pre>
 
@@ -67,7 +67,7 @@ function showAlert(id, message, isError=false) {
 
 // Health check
 function callHealth() {
-    fetch(`${serverUrl}/health`)
+    fetch(`${serverUrl}/health`, { headers: getHeaders() })
         .then(res => res.json())
         .then(data => {
             document.getElementById("healthResult").innerText = JSON.stringify(data, null, 2);
@@ -129,29 +129,50 @@ function updateAnomaly() {
             } else {
                 document.getElementById("anomalyResult").innerText = JSON.stringify(data, null, 2);
                 if (data.anomaly === 1) {
-                    showAlert("anomalyAlert", "🚨 Anomaly detected! Probability: " + data.probability.toFixed(3));
+                    showAlert("anomalyAlert", "🚨 Anomaly detected! Probability: " + (data.probability*100).toFixed(2) + "%");
                 } else {
-                    showAlert("anomalyAlert", "✅ No anomaly detected. Probability: " + data.probability.toFixed(3));
+                    showAlert("anomalyAlert", "✅ No anomaly detected. Probability: " + (data.probability*100).toFixed(2) + "%");
                 }
             }
         })
         .catch(err => document.getElementById("anomalyResult").innerText = "❌ Error fetching anomaly");
 }
 
-// RUL prediction
+// Failure probability prediction
 function updateRUL() {
     const air = document.getElementById("rulAir").value;
-    fetch(`${serverUrl}/predict_rul?air_id=${air}`, { headers: getHeaders() })
+    fetch(`${serverUrl}/predict_cnn_lstm?air_id=${air}`, { headers: getHeaders() })
         .then(res => res.json())
         .then(data => {
-            document.getElementById("rulResult").innerText = `RUL: ${data.rul_hours} hours`;
-            showAlert("rulAlert", "✅ RUL fetched successfully");
+            if (data.detail) {
+                document.getElementById("rulResult").innerText = `❌ ${data.detail}`;
+                showAlert("rulAlert", "❌ Error", true);
+            } else if (data.failure_probabilities) {
+                const probs = data.failure_probabilities;
+                let output = `Failure probabilities for AIR ${data.air_id}:\n`;
+                output += `1 hour ahead:  ${(probs["1_hour"]*100).toFixed(2)} %\n`;
+                output += `2 hours ahead: ${(probs["2_hours"]*100).toFixed(2)} %\n`;
+                output += `4 hours ahead: ${(probs["4_hours"]*100).toFixed(2)} %\n`;
+                output += `6 hours ahead: ${(probs["6_hours"]*100).toFixed(2)} %\n`;
+                document.getElementById("rulResult").innerText = output;
+
+                const maxProb = Math.max(probs["1_hour"], probs["2_hours"], probs["4_hours"], probs["6_hours"]);
+                if (maxProb > 0.5) {
+                    showAlert("rulAlert", `🚨 High failure risk! Max probability: ${(maxProb*100).toFixed(1)}%`);
+                } else {
+                    showAlert("rulAlert", "✅ Failure risk low");
+                }
+            } else {
+                document.getElementById("rulResult").innerText = "No data returned";
+                showAlert("rulAlert", "⚠️ No data", true);
+            }
         })
         .catch(err => {
-            document.getElementById("rulResult").innerText = "❌ Error fetching RUL";
+            document.getElementById("rulResult").innerText = "❌ Error fetching failure probabilities";
             showAlert("rulAlert", "❌ Error", true);
         });
 }
+
 </script>
 </body>
 </html>

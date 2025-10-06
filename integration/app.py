@@ -3,11 +3,10 @@ from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 import joblib
 import pandas as pd
-import tensorflow as tf
-# from tensorflow.keras.models import load_model
+import numpy as np
+import onnxruntime as ort
 from influxdb_client import InfluxDBClient
 from feature_engineering import feature_engineering_dispatcher
-
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -21,24 +20,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# load model
-anomaly_model= joblib.load("../Models/xgboost_12318.plk")
-# cnn_lstm_model = load_model("../Models/cnn_lstm_model.keras")
+# Load models
+anomaly_model = joblib.load("../Models/xgboost_12318.pkl")
 
-# API Key for basic authentication 
-API_KEY = "key123456" # hardcoded for now
+# ONNX model session (for CNN-LSTM RUL prediction)
+cnn_lstm_session = ort.InferenceSession("../Models/cnn_lstm_pm_enhanced.onnx")
 
-# InfluxDB settings 
-INFLUX_URL = "http://your-influxdb:8086"
-INFLUX_TOKEN = "YTHptiWTEs5bZCQudb8qDcrfBDTyXrbuF_vEttYM1baTsUicwfYa7fbgpRFJUQIT6rDoUwH1puHnU-pC20vYwSg=="
+
+# API Key for basic authentication
+API_KEY = "key123456"
+
+# InfluxDB settings
+INFLUX_URL = "http://localhost:8086"
+INFLUX_TOKEN = "THptiWTEs5bZCQudb8qDcrfBDTyXrbuF_vEttYM1baTsUicwfYa7fbgpRFJUQIT6rDoUwH1puHnU-pC20vYwSg=="
 INFLUX_ORG = "Generator"
 INFLUX_BUCKET = "RT_Data"
 
-# data model for optional POST requests 
+# Data model
 class DataPoint(BaseModel):
     air_id: str
     features: dict
 
+# Utility: fetch InfluxDB data
 def fetch_influx_data(air_id: str, start="-1h") -> pd.DataFrame:
     client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
     query_api = client.query_api()
@@ -50,31 +53,33 @@ def fetch_influx_data(air_id: str, start="-1h") -> pd.DataFrame:
     '''
     df = query_api.query_data_frame(query)
     client.close()
-    
+
     if "_time" in df.columns:
         df['time'] = pd.to_datetime(df['_time'], errors='coerce')
         df = df.sort_values('time').reset_index(drop=True)
         df = df.drop(columns=["_time"], errors="ignore")
-    
+
     return df
 
+# Utility: align features for anomaly model
 def align_features_to_model(df_features: pd.DataFrame, model) -> pd.DataFrame:
-    # fill missing columns with 0
     model_cols = model.get_booster().feature_names
     for col in model_cols:
         if col not in df_features.columns:
             df_features[col] = 0
     return df_features[model_cols]
 
-# Endpoints
-# test db conn
+# endpoints 
+
 @app.get("/test_db_connection")
 def test_db_connection(x_api_key: str = Header(None)):
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
     try:
         client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
-        df = client.query_api().query_data_frame(f'from(bucket:"{INFLUX_BUCKET}") |> range(start: -1m) |> limit(n:1)')
+        df = client.query_api().query_data_frame(
+            f'from(bucket:"{INFLUX_BUCKET}") |> range(start: -1m) |> limit(n:1)'
+        )
         client.close()
         return {"status": "ok", "rows_returned": len(df)}
     except Exception as e:
@@ -103,7 +108,6 @@ def test_features(air_id: str, x_api_key: str = Header(None)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Feature engineering error: {str(e)}")
 
-
 @app.get("/predict_anomaly")
 def predict_anomaly(air_id: str, x_api_key: str = Header(None)):
     if x_api_key != API_KEY:
@@ -121,25 +125,65 @@ def predict_anomaly(air_id: str, x_api_key: str = Header(None)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Anomaly prediction error: {str(e)}")
 
+# for cnn ltsm model 
+# load scaler used in training
+rul_scaler = joblib.load("../Models/scaler_cnn_lstm_pm_enhanced.pkl")
 
-@app.get("/predict_rul")
-def predict_rul(air_id: str, x_api_key: str = Header(None)):
+# define exact feature order used in training
+RUL_FEATURE_ORDER = [
+    'va_V','vb_V','vc_V','va-vb_V','vb-vc_V','vc-va_V',
+    'ia_A','ib_A','ic_A',
+    'ptot_W','qtot_Var','stot_VA','pa_W','pb_W','pc_W',
+    'pfa_None','pfb_None','pfc_None','pftot_None',
+    'temp_Degrees Celsius','pressure_Bar','fuel_%','freq_Hz*10',
+    'current_imbalance','voltage_imbalance','pf_anomaly',
+    'temp_Degrees Celsius_roc','fuel_%_roc',
+    'ptot_W_rollmean','ptot_W_rollstd','ia_A_rollmean','ia_A_rollstd','pf_anomaly_rollmean','pf_anomaly_rollstd',
+    'is_running'
+]
+
+@app.get("/predict_cnn_lstm")
+def predict_cnn_lstm(air_id: str, x_api_key: str = Header(None)):
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    if cnn_lstm_model is None:
-        raise HTTPException(status_code=500, detail="CNN-LSTM model not loaded")
+    if cnn_lstm_session is None:
+        raise HTTPException(status_code=500, detail="ONNX CNN-LSTM model not loaded")
 
     df_raw = fetch_influx_data(air_id)
     if df_raw.empty:
         return {"rul": None, "message": f"No new data for AIR {air_id}"}
-    
+
     try:
         numeric_df = df_raw.select_dtypes(include='number')
         df_features = feature_engineering_dispatcher(numeric_df, air_id)
 
-        # Adapt input shape: (1, timesteps, features)
-        X_input = np.expand_dims(df_features.values, axis=0)
-        preds = cnn_lstm_model.predict(X_input)[0]  # [p_1h, p_2h, p_4h, p_6h]
+        # Ensure all features exist
+        for f in RUL_FEATURE_ORDER:
+            if f not in df_features.columns:
+                df_features[f] = 0
+
+        # Align columns
+        df_aligned = df_features[RUL_FEATURE_ORDER]
+
+        # Pad or truncate to 60 timesteps
+        seq_len = 60
+        if len(df_aligned) < seq_len:
+            pad = pd.DataFrame(0, index=range(seq_len - len(df_aligned)), columns=df_aligned.columns)
+            df_aligned = pd.concat([pad, df_aligned], ignore_index=True)
+        elif len(df_aligned) > seq_len:
+            df_aligned = df_aligned.tail(seq_len).reset_index(drop=True)
+
+        # Scale features
+        X_scaled = rul_scaler.transform(df_aligned.values.astype(np.float32))
+
+        # Add batch dimension for ONNX input
+        X_input = np.expand_dims(X_scaled, axis=0)
+
+        # Get input/output names
+        input_name = cnn_lstm_session.get_inputs()[0].name
+        output_name = cnn_lstm_session.get_outputs()[0].name
+
+        preds = cnn_lstm_session.run([output_name], {input_name: X_input})[0][0]
 
         return {
             "air_id": air_id,
@@ -150,13 +194,14 @@ def predict_rul(air_id: str, x_api_key: str = Header(None)):
                 "6_hours": float(preds[3]),
             }
         }
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"RUL prediction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"CNN-LSTM prediction error: {str(e)}")
 
 @app.get("/health")
 def health_check():
     return {
         "status": "ok",
         "anomaly_model_loaded": anomaly_model is not None,
-        "cnn_lstm_loaded": cnn_lstm_model is not None
+        "cnn_lstm_loaded": cnn_lstm_session is not None
     }
