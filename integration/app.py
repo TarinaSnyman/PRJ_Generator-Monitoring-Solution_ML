@@ -78,7 +78,7 @@ def test_db_connection(x_api_key: str = Header(None)):
     try:
         client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
         df = client.query_api().query_data_frame(
-            f'from(bucket:"{INFLUX_BUCKET}") |> range(start: -1m) |> limit(n:1)'
+            f'from(bucket:"{INFLUX_BUCKET}") |> range(start: -1h) '
         )
         client.close()
         return {"status": "ok", "rows_returned": len(df)}
