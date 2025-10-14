@@ -23,12 +23,3 @@ Backup power generators are critical but often suffer from unplanned failures du
 4. **Deployment** – Integrate ML models into a cloud-based dashboard for real-time monitoring and alerts.  
 5. **Evaluation** – Validate model performance in controlled environments before scaling.  
 
----
-
-##  Tech Stack
-- **ML Frameworks**: 
-- **Backend**: 
-- **Database**:   
-
-- Yaseen, Md. et al. (2017). *IoT-based condition monitoring of generators and predictive maintenance*. ICCES.  
-
