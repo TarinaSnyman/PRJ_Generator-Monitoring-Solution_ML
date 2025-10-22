@@ -4,7 +4,7 @@ import numpy as np
 from sklearn.mixture import GaussianMixture
 
 # helper function to map raw influx columns to model features 
-def map_influx_to_model_columns(df: pd.DataFrame) -> pd.DataFrame:
+def map_influx_to_model_columns_12318(df: pd.DataFrame) -> pd.DataFrame:
     column_mapping = {
         'ia':'ia_A', 'ib':'ib_A', 'ic':'ic_A',
         'ptot':'ptot_W', 'pftot':'pftot_None',
@@ -18,6 +18,53 @@ def map_influx_to_model_columns(df: pd.DataFrame) -> pd.DataFrame:
         'pressure':'pressure_Bar', 'fuel':'fuel_%', 'vbat':'vbat_V', 'hours':'hours_sec'
     }
     df = df.rename(columns=column_mapping)
+    return df
+
+def map_influx_to_model_columns_123005(df: pd.DataFrame) -> pd.DataFrame:
+    mapping = {
+        "result": "id",
+        "table": "epoch",
+        "_start": "start_time",
+        "_stop": "stop_time",
+        "_time": "time",
+        "_measurement": "air",
+        "app": "app_none",
+        "device_id": "device",
+        "cooltemp": "cooltemp_degree-celsius",
+        "expvar": "expvar_var-hour",
+        "expwh": "expwh_watt-hour",
+        "freq": "freq_hertz",
+        "hours": "hours_hour",
+        "ia": "ia_ampere",
+        "iavg": "iavg_ampere",
+        "ib": "ib_ampere",
+        "ic": "ic_ampere",
+        "oilpress": "oilpress_pascal",
+        "pftot": "pftot_none",
+        "ptot": "ptot_watt",
+        "ptotper": "ptotper_percent",
+        "qtot": "qtot_var",
+        "qtotper": "qtotper_percent",
+        "rpm": "rpm_revolutions-per-minute",
+        "servday": "servday_day",
+        "servhr": "servhr_hour",
+        "startcount": "startcount_none",
+        "state": "state_none",
+        "stot": "stot_volt-ampere",
+        "stotper": "stotper_percent",
+        "va": "va_volt",
+        "vb": "vb_volt",
+        "vc": "vc_volt",
+        "vlineavg": "vlineavg_volt",
+        "vlineper": "vlineper_volt",
+        "vbat": "vbat_volt"
+    }
+
+    # Apply mapping only for existing columns to avoid KeyErrors
+    df = df.rename(columns={k: v for k, v in mapping.items() if k in df.columns})
+    # drop unneeded columns
+    drop_cols = ["result", "table", "_start", "_stop"]
+    df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
     return df
 
 
@@ -100,15 +147,66 @@ def feature_engineering_air12318(df: pd.DataFrame) -> pd.DataFrame:
 
 
 
-# eventually other air feature engineering
+# feature engineering for 12305
+def feature_engineering_air12305(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    # Detect ON/OFF using GMM
+    if 'ptot_watt' in df.columns:
+        gmm = GaussianMixture(n_components=2, random_state=42)
+        labels = gmm.fit_predict(df[['ptot_watt']].fillna(0))
+        running_label = np.argmax(gmm.means_.flatten())
+        df['is_running'] = (labels == running_label).astype(int)
+    else:
+        df['is_running'] = 0
+
+    # PF anomaly
+    if 'pftot_none' in df.columns:
+        df['pf_anomaly'] = np.abs(1 - df['pftot_none'].clip(0, 1))
+    else:
+        df['pf_anomaly'] = np.nan
+
+    # Current imbalance
+    if all(c in df.columns for c in ['ia_ampere', 'ib_ampere', 'ic_ampere']):
+        df['current_imbalance'] = df[['ia_ampere','ib_ampere','ic_ampere']].std(axis=1) / \
+                                  df[['ia_ampere','ib_ampere','ic_ampere']].mean(axis=1)
+    else:
+        df['current_imbalance'] = 0
+
+    # Power ratio
+    if all(c in df.columns for c in ['ptot_watt','stot_volt-ampere']):
+        df['power_ratio'] = df['ptot_watt'] / df['stot_volt-ampere'].replace(0, np.nan)
+    else:
+        df['power_ratio'] = 0
+
+    # Rolling stats
+    ROLL_WINDOW = 10
+    if 'cooltemp_degree-celsius' in df.columns:
+        df['temp_roll_mean'] = df['cooltemp_degree-celsius'].rolling(ROLL_WINDOW).mean()
+        df['temp_roll_std'] = df['cooltemp_degree-celsius'].rolling(ROLL_WINDOW).std()
+
+    if 'ptot_watt' in df.columns:
+        df['ptot_watt_rollmean'] = df['ptot_watt'].rolling(ROLL_WINDOW).mean()
+        df['ptot_watt_rollstd'] = df['ptot_watt'].rolling(ROLL_WINDOW).std()
+
+    df = df.fillna(0)
+    return df
+
 
 #dispatches the feture engineered dataset for each air
 def feature_engineering_dispatcher(df: pd.DataFrame, air_id: str) -> pd.DataFrame:
-    # map Influx columns to model features
-    df_mapped = map_influx_to_model_columns(df)
+    if df.empty:
+        raise ValueError(f"No data provided for AIR {air_id}")
+    
+    df_mapped=[]
     if air_id == "12318" or air_id=="Epi":
+        # map Influx columns to model features
+        df_mapped = map_influx_to_model_columns_12318(df)
         return feature_engineering_air12318(df_mapped)
-    # elif air_id == "":
-    #     return feature_engineering_air56789(df_mapped)
+    elif air_id in ["12300", "12305", "Millitary1", "Millitary2"]:
+        df_mapped = map_influx_to_model_columns_123005(df)
+        return feature_engineering_air12305(df_mapped)
     else:
         raise ValueError(f"Feature engineering not defined for AIR {air_id}")
+    
+

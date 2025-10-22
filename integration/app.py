@@ -22,7 +22,9 @@ app.add_middleware(
 
 # Load models
 # anomaly detection with xgboost
-anomaly_model = joblib.load("../Models/xgboost_12318.pkl")
+anomaly_model_12318 = joblib.load("../Models/xgboost_12318.pkl")
+anomaly_model_12300 = joblib.load("../Models/xgboost_1230.pkl")
+anomaly_model_12305 = joblib.load("../Models/xgboost_12305.pkl")
 
 # CNN-LSTM prediction
 cnn_lstm_session = ort.InferenceSession("../Models/cnn_lstm_pm_enhanced.onnx")
@@ -116,21 +118,52 @@ def test_features(air_id: str, x_api_key: str = Header(None)):
 # realtimde data from the database
 # xgboost models
 @app.get("/predict_anomaly")
-def predict_anomaly(air_id: str, x_api_key: str = Header(None)):
+def predict_anomaly( air_id: str,source: str = "influx", x_api_key: str = Header(None)):
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    df_raw = fetch_influx_data(air_id)
-    if df_raw.empty:
-        return {"anomaly": None, "message": f"No new data for AIR {air_id}"}
+
     try:
+        if source == "on":
+            csv_path = f"../data/simulatedData/onData/air{air_id}_SimulatedData.csv"
+            df_raw = pd.read_csv(csv_path)
+        elif source == "failing":
+            csv_path = f"../data/simulatedData/onFailingData/air{air_id}_SimulatedFailingData.csv"
+            df_raw = pd.read_csv(csv_path)
+        elif source == "influx":
+            df_raw = fetch_influx_data(air_id)
+        else:
+            raise HTTPException(status_code=400, detail="Invalid source type. Use 'influx' or 'csv'.")
+
+        if df_raw.empty:
+            return {"anomaly": None, "message": f"No new data for AIR {air_id}"}
+
         numeric_df = df_raw.select_dtypes(include='number')
         df_features = feature_engineering_dispatcher(numeric_df, air_id)
-        df_features = align_features_to_model(df_features, anomaly_model)
-        pred = anomaly_model.predict(df_features)[-1]
-        prob = anomaly_model.predict_proba(df_features)[-1, 1]
-        return {"anomaly": int(pred), "probability": float(prob), "air_id": air_id}
+
+        # Select model based on air_id
+        if air_id == "12318" or air_id=="Epi":
+            model = anomaly_model_12318
+        elif air_id == "12300" or air_id=="Military1":
+            model = anomaly_model_12300
+        elif air_id == "12305" or air_id=="Military2":
+            model = anomaly_model_12305   
+        else:
+            raise ValueError(f"No model available for AIR {air_id}")
+
+        df_features = align_features_to_model(df_features, model)
+        pred = model.predict(df_features)[-1]
+        prob = model.predict_proba(df_features)[-1, 1]
+
+        return {
+            "air_id": air_id,
+            "source": source,
+            "anomaly": int(pred),
+            "probability": float(prob)
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Anomaly prediction error: {str(e)}")
+
 
 # cnn ltsm model 
 # load scaler used in training
@@ -202,7 +235,6 @@ def predict_cnn_lstm(air_id: str, x_api_key: str = Header(None)):
         raise HTTPException(status_code=500, detail=f"CNN-LSTM prediction error: {str(e)}")
 
 
-# Models with simulated on data from csv
 
 #models with simulated failing data from csv
 
@@ -212,6 +244,7 @@ def predict_cnn_lstm(air_id: str, x_api_key: str = Header(None)):
 def health_check():
     return {
         "status": "ok",
-        "anomaly_model_loaded": anomaly_model is not None,
+        "anomaly_model_12318_loaded": anomaly_model_12318 is not None,
+        "anomaly_model_12305_loaded": anomaly_model_12305 is not None,
         "cnn_lstm_loaded": cnn_lstm_session is not None
     }

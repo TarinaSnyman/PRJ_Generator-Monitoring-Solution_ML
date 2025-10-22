@@ -5,7 +5,7 @@
 <title>Anomaly & Failure Probability Dashboard</title>
 <style>
 body { font-family: Arial, sans-serif; margin: 20px; }
-input, button { margin: 5px 0; padding: 5px; }
+input, button, select { margin: 5px 0; padding: 5px; }
 pre { background: #f4f4f4; padding: 10px; border: 1px solid #ddd; max-height: 300px; overflow:auto; }
 .alert { font-weight: bold; padding: 10px; margin: 10px 0; border-radius: 4px; }
 .ok { background: #d4edda; color: #155724; }
@@ -40,20 +40,33 @@ pre { background: #f4f4f4; padding: 10px; border: 1px solid #ddd; max-height: 30
 
 <h3>5. Anomaly Detection (XGBoost)</h3>
 <label>AIR ID:</label>
-<input type="text" id="anomalyAir" value="Epi">
+<input type="text" id="anomalyAir" value="Epi"><br>
+<label>Data Source:</label>
+<select id="sourceSelect">
+  <option value="influx">Live InfluxDB</option>
+  <option value="on">Simulated ON Data (CSV)</option>
+  <option value="failing">Simulated FAILING Data (CSV)</option>
+</select><br>
 <button onclick="updateAnomaly()">Predict Anomaly</button>
 <div id="anomalyAlert"></div>
 <pre id="anomalyResult"></pre>
 
 <h3>6. Failure Probability Prediction (CNN-LSTM)</h3>
 <label>AIR ID:</label>
-<input type="text" id="rulAir" value="Epi">
+<input type="text" id="rulAir" value="Epi"><br>
+<label>Data Source:</label>
+<select id="sourceSelectRUL">
+  <option value="influx">Live InfluxDB</option>
+  <option value="on">Simulated ON Data (CSV)</option>
+  <option value="failing">Simulated FAILING Data (CSV)</option>
+</select><br>
 <button onclick="updateRUL()">Predict Failure Probabilities</button>
 <div id="rulAlert"></div>
 <pre id="rulResult"></pre>
 
 <script>
-const serverUrl = "https://euna-luteotropic-casie.ngrok-free.dev"; // ngrok URL that tunnels to api on server
+const serverUrl = "https://euna-luteotropic-casie.ngrok-free.dev"; // ngrok URL that tunnels to API on server
+// const serverUrl = "http://192.168.2.106:8081"; // local IP alternative
 
 function getHeaders() {
     return {
@@ -73,10 +86,8 @@ async function safeFetch(endpoint) {
     const url = `${serverUrl}${endpoint}`;
     const headers = getHeaders();
     console.log("Fetching:", url);
-    console.log("Headers:", headers);
     try {
         const res = await fetch(url, { headers });
-        console.log("Raw response:", res);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         console.log("Parsed JSON:", data);
@@ -87,7 +98,7 @@ async function safeFetch(endpoint) {
     }
 }
 
-// Health check
+// 1️⃣ Health check
 async function callHealth() {
     try {
         const data = await safeFetch("/health");
@@ -98,7 +109,7 @@ async function callHealth() {
     }
 }
 
-// DB connection
+// 2️⃣ DB connection
 async function callDBConnection() {
     try {
         const data = await safeFetch("/test_db_connection");
@@ -112,7 +123,7 @@ async function callDBConnection() {
     }
 }
 
-// Fetch raw data
+// 3️⃣ Fetch raw data
 async function callFetchData() {
     const air = document.getElementById("fetchAir").value;
     try {
@@ -123,7 +134,7 @@ async function callFetchData() {
     }
 }
 
-// Feature engineering test
+// 4️⃣ Feature engineering test
 async function callFeatures() {
     const air = document.getElementById("featureAir").value;
     try {
@@ -138,11 +149,12 @@ async function callFeatures() {
     }
 }
 
-// Anomaly prediction
+// 5️⃣ Anomaly prediction
 async function updateAnomaly() {
     const air = document.getElementById("anomalyAir").value;
+    const source = document.getElementById("sourceSelect").value;
     try {
-        const data = await safeFetch(`/predict_anomaly?air_id=${air}`);
+        const data = await safeFetch(`/predict_anomaly?air_id=${air}&source=${source}`);
         if (data.detail) {
             document.getElementById("anomalyResult").innerText = `❌ ${data.detail}`;
             showAlert("anomalyAlert", "❌ Error", true);
@@ -162,11 +174,12 @@ async function updateAnomaly() {
     }
 }
 
-// Failure probability prediction
+// 6️⃣ Failure probability prediction
 async function updateRUL() {
     const air = document.getElementById("rulAir").value;
+    const source = document.getElementById("sourceSelectRUL").value;
     try {
-        const data = await safeFetch(`/predict_cnn_lstm?air_id=${air}`);
+        const data = await safeFetch(`/predict_cnn_lstm?air_id=${air}&source=${source}`);
         if (data.detail) {
             document.getElementById("rulResult").innerText = `❌ ${data.detail}`;
             showAlert("rulAlert", "❌ Error", true);
@@ -194,7 +207,6 @@ async function updateRUL() {
         showAlert("rulAlert", "❌ Error", true);
     }
 }
-
 </script>
 </body>
 </html>
