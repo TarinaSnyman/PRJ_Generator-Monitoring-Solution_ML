@@ -203,7 +203,7 @@ def feature_engineering_dispatcher(df: pd.DataFrame, air_id: str) -> pd.DataFram
         # map Influx columns to model features
         df_mapped = map_influx_to_model_columns_12318(df)
         return feature_engineering_air12318(df_mapped)
-    elif air_id in ["12300", "12305", "Millitary1", "Millitary2"]:
+    elif air_id in ["12300", "12305", "Military1", "Military2"]:
         df_mapped = map_influx_to_model_columns_123005(df)
         return feature_engineering_air12305(df_mapped)
     else:
