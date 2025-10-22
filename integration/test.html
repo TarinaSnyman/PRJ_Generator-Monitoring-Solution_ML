@@ -5,7 +5,7 @@
 <title>Anomaly & Failure Probability Dashboard</title>
 <style>
 body { font-family: Arial, sans-serif; margin: 20px; }
-input, button { margin: 5px 0; padding: 5px; }
+input, button, select { margin: 5px 0; padding: 5px; }
 pre { background: #f4f4f4; padding: 10px; border: 1px solid #ddd; max-height: 300px; overflow:auto; }
 .alert { font-weight: bold; padding: 10px; margin: 10px 0; border-radius: 4px; }
 .ok { background: #d4edda; color: #155724; }
@@ -40,23 +40,39 @@ pre { background: #f4f4f4; padding: 10px; border: 1px solid #ddd; max-height: 30
 
 <h3>5. Anomaly Detection (XGBoost)</h3>
 <label>AIR ID:</label>
-<input type="text" id="anomalyAir" value="Epi">
+<input type="text" id="anomalyAir" value="Epi"><br>
+<label>Data Source:</label>
+<select id="sourceSelect">
+  <option value="influx">Live InfluxDB</option>
+  <option value="on">Simulated ON Data (CSV)</option>
+  <option value="failing">Simulated FAILING Data (CSV)</option>
+</select><br>
 <button onclick="updateAnomaly()">Predict Anomaly</button>
 <div id="anomalyAlert"></div>
 <pre id="anomalyResult"></pre>
 
 <h3>6. Failure Probability Prediction (CNN-LSTM)</h3>
 <label>AIR ID:</label>
-<input type="text" id="rulAir" value="Epi">
+<input type="text" id="rulAir" value="Epi"><br>
+<label>Data Source:</label>
+<select id="sourceSelectRUL">
+  <option value="influx">Live InfluxDB</option>
+  <option value="on">Simulated ON Data (CSV)</option>
+  <option value="failing">Simulated FAILING Data (CSV)</option>
+</select><br>
 <button onclick="updateRUL()">Predict Failure Probabilities</button>
 <div id="rulAlert"></div>
 <pre id="rulResult"></pre>
 
 <script>
-const serverUrl = "http://102.33.109.186:8081";// server IP
+const serverUrl = "https://euna-luteotropic-casie.ngrok-free.dev"; // ngrok URL that tunnels to API on server
+// const serverUrl = "http://192.168.2.106:8081"; // local IP alternative
 
 function getHeaders() {
-    return { "x-api-key": document.getElementById("apiKey").value };
+    return {
+        "x-api-key": document.getElementById("apiKey").value,
+        "ngrok-skip-browser-warning": "true"
+    };
 }
 
 function showAlert(id, message, isError=false) {
@@ -65,114 +81,132 @@ function showAlert(id, message, isError=false) {
     div.innerText = message;
 }
 
-// Health check
-function callHealth() {
-    fetch(`${serverUrl}/health`, { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            document.getElementById("healthResult").innerText = JSON.stringify(data, null, 2);
-            showAlert("healthResult", "✅ Server healthy, anomaly model loaded: " + data.anomaly_model_loaded);
-        })
-        .catch(err => showAlert("healthResult", "❌ Error fetching health", true));
+// Unified fetch with console logging
+async function safeFetch(endpoint) {
+    const url = `${serverUrl}${endpoint}`;
+    const headers = getHeaders();
+    console.log("Fetching:", url);
+    try {
+        const res = await fetch(url, { headers });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        console.log("Parsed JSON:", data);
+        return data;
+    } catch (err) {
+        console.error("Fetch error:", err);
+        throw err;
+    }
 }
 
-// DB connection
-function callDBConnection() {
-    fetch(`${serverUrl}/test_db_connection`, { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            if (data.status === "ok") {
-                document.getElementById("dbResult").innerText = `✅ DB connected! Rows returned: ${data.rows_returned}`;
-            } else {
-                document.getElementById("dbResult").innerText = `❌ DB connection failed: ${data.error}`;
-            }
-        })
-        .catch(err => document.getElementById("dbResult").innerText = "❌ Error connecting to DB");
+// 1️⃣ Health check
+async function callHealth() {
+    try {
+        const data = await safeFetch("/health");
+        document.getElementById("healthResult").innerText = JSON.stringify(data, null, 2);
+        showAlert("healthResult", "✅ Server healthy, anomaly model loaded: " + data.anomaly_model_loaded);
+    } catch {
+        showAlert("healthResult", "❌ Error fetching health", true);
+    }
 }
 
-// Fetch raw data
-function callFetchData() {
+// 2️⃣ DB connection
+async function callDBConnection() {
+    try {
+        const data = await safeFetch("/test_db_connection");
+        if (data.status === "ok") {
+            document.getElementById("dbResult").innerText = `✅ DB connected! Rows returned: ${data.rows_returned}`;
+        } else {
+            document.getElementById("dbResult").innerText = `❌ DB connection failed: ${data.error}`;
+        }
+    } catch {
+        document.getElementById("dbResult").innerText = "❌ Error connecting to DB";
+    }
+}
+
+// 3️⃣ Fetch raw data
+async function callFetchData() {
     const air = document.getElementById("fetchAir").value;
-    fetch(`${serverUrl}/fetch_data?air_id=${air}`, { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => document.getElementById("fetchResult").innerText = JSON.stringify(data, null, 2))
-        .catch(err => document.getElementById("fetchResult").innerText = "❌ Error fetching data");
+    try {
+        const data = await safeFetch(`/fetch_data?air_id=${air}`);
+        document.getElementById("fetchResult").innerText = JSON.stringify(data, null, 2);
+    } catch {
+        document.getElementById("fetchResult").innerText = "❌ Error fetching data";
+    }
 }
 
-// Feature engineering test
-function callFeatures() {
+// 4️⃣ Feature engineering test
+async function callFeatures() {
     const air = document.getElementById("featureAir").value;
-    fetch(`${serverUrl}/test_features?air_id=${air}`, { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            if (data.detail) {
-                document.getElementById("featureResult").innerText = `❌ ${data.detail}`;
-            } else {
-                document.getElementById("featureResult").innerText = JSON.stringify(data, null, 2);
-            }
-        })
-        .catch(err => document.getElementById("featureResult").innerText = "❌ Error during feature engineering");
+    try {
+        const data = await safeFetch(`/test_features?air_id=${air}`);
+        if (data.detail) {
+            document.getElementById("featureResult").innerText = `❌ ${data.detail}`;
+        } else {
+            document.getElementById("featureResult").innerText = JSON.stringify(data, null, 2);
+        }
+    } catch {
+        document.getElementById("featureResult").innerText = "❌ Error during feature engineering";
+    }
 }
 
-// Anomaly prediction
-function updateAnomaly() {
+// 5️⃣ Anomaly prediction
+async function updateAnomaly() {
     const air = document.getElementById("anomalyAir").value;
-    fetch(`${serverUrl}/predict_anomaly?air_id=${air}`, { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            if (data.detail) {
-                document.getElementById("anomalyResult").innerText = `❌ ${data.detail}`;
-                showAlert("anomalyAlert", "❌ Error", true);
-            } else if (data.anomaly === null) {
-                document.getElementById("anomalyResult").innerText = data.message;
-                showAlert("anomalyAlert", "⚠️ No new data", true);
+    const source = document.getElementById("sourceSelect").value;
+    try {
+        const data = await safeFetch(`/predict_anomaly?air_id=${air}&source=${source}`);
+        if (data.detail) {
+            document.getElementById("anomalyResult").innerText = `❌ ${data.detail}`;
+            showAlert("anomalyAlert", "❌ Error", true);
+        } else if (data.anomaly === null) {
+            document.getElementById("anomalyResult").innerText = data.message;
+            showAlert("anomalyAlert", "⚠️ No new data", true);
+        } else {
+            document.getElementById("anomalyResult").innerText = JSON.stringify(data, null, 2);
+            if (data.anomaly === 1) {
+                showAlert("anomalyAlert", "🚨 Anomaly detected! Probability: " + (data.probability*100).toFixed(2) + "%");
             } else {
-                document.getElementById("anomalyResult").innerText = JSON.stringify(data, null, 2);
-                if (data.anomaly === 1) {
-                    showAlert("anomalyAlert", "🚨 Anomaly detected! Probability: " + (data.probability*100).toFixed(2) + "%");
-                } else {
-                    showAlert("anomalyAlert", "✅ No anomaly detected. Probability: " + (data.probability*100).toFixed(2) + "%");
-                }
+                showAlert("anomalyAlert", "✅ No anomaly detected. Probability: " + (data.probability*100).toFixed(2) + "%");
             }
-        })
-        .catch(err => document.getElementById("anomalyResult").innerText = "❌ Error fetching anomaly");
+        }
+    } catch {
+        document.getElementById("anomalyResult").innerText = "❌ Error fetching anomaly";
+    }
 }
 
-// Failure probability prediction
-function updateRUL() {
+// 6️⃣ Failure probability prediction
+async function updateRUL() {
     const air = document.getElementById("rulAir").value;
-    fetch(`${serverUrl}/predict_cnn_lstm?air_id=${air}`, { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            if (data.detail) {
-                document.getElementById("rulResult").innerText = `❌ ${data.detail}`;
-                showAlert("rulAlert", "❌ Error", true);
-            } else if (data.failure_probabilities) {
-                const probs = data.failure_probabilities;
-                let output = `Failure probabilities for AIR ${data.air_id}:\n`;
-                output += `1 hour ahead:  ${(probs["1_hour"]*100).toFixed(2)} %\n`;
-                output += `2 hours ahead: ${(probs["2_hours"]*100).toFixed(2)} %\n`;
-                output += `4 hours ahead: ${(probs["4_hours"]*100).toFixed(2)} %\n`;
-                output += `6 hours ahead: ${(probs["6_hours"]*100).toFixed(2)} %\n`;
-                document.getElementById("rulResult").innerText = output;
-
-                const maxProb = Math.max(probs["1_hour"], probs["2_hours"], probs["4_hours"], probs["6_hours"]);
-                if (maxProb > 0.5) {
-                    showAlert("rulAlert", `🚨 High failure risk! Max probability: ${(maxProb*100).toFixed(1)}%`);
-                } else {
-                    showAlert("rulAlert", "✅ Failure risk low");
-                }
-            } else {
-                document.getElementById("rulResult").innerText = "No data returned";
-                showAlert("rulAlert", "⚠️ No data", true);
-            }
-        })
-        .catch(err => {
-            document.getElementById("rulResult").innerText = "❌ Error fetching failure probabilities";
+    const source = document.getElementById("sourceSelectRUL").value;
+    try {
+        const data = await safeFetch(`/predict_cnn_lstm?air_id=${air}&source=${source}`);
+        if (data.detail) {
+            document.getElementById("rulResult").innerText = `❌ ${data.detail}`;
             showAlert("rulAlert", "❌ Error", true);
-        });
-}
+        } else if (data.failure_probabilities) {
+            const probs = data.failure_probabilities;
+            let output = `Failure probabilities for AIR ${data.air_id}:\n`;
+            output += `1 hour ahead:  ${(probs["1_hour"]*100).toFixed(2)} %\n`;
+            output += `2 hours ahead: ${(probs["2_hours"]*100).toFixed(2)} %\n`;
+            output += `4 hours ahead: ${(probs["4_hours"]*100).toFixed(2)} %\n`;
+            output += `6 hours ahead: ${(probs["6_hours"]*100).toFixed(2)} %\n`;
+            document.getElementById("rulResult").innerText = output;
 
+            const maxProb = Math.max(probs["1_hour"], probs["2_hours"], probs["4_hours"], probs["6_hours"]);
+            if (maxProb > 0.5) {
+                showAlert("rulAlert", `🚨 High failure risk! Max probability: ${(maxProb*100).toFixed(1)}%`);
+            } else {
+                showAlert("rulAlert", "✅ Failure risk low");
+            }
+        } else {
+            document.getElementById("rulResult").innerText = "No data returned";
+            showAlert("rulAlert", "⚠️ No data", true);
+        }
+    } catch {
+        document.getElementById("rulResult").innerText = "❌ Error fetching failure probabilities";
+        showAlert("rulAlert", "❌ Error", true);
+    }
+}
 </script>
 </body>
 </html>
