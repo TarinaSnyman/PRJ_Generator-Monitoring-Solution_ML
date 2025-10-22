@@ -1,6 +1,7 @@
 # feature_engineering.py
 import pandas as pd
 import numpy as np
+import joblib
 from sklearn.mixture import GaussianMixture
 
 # helper function to map raw influx columns to model features 
@@ -209,4 +210,42 @@ def feature_engineering_dispatcher(df: pd.DataFrame, air_id: str) -> pd.DataFram
     else:
         raise ValueError(f"Feature engineering not defined for AIR {air_id}")
     
+# CNN LTSM
+# load scaler once globally
+def preprocess_for_cnn_lstm(df, scaler_info, timesteps=60):
+    scaler = scaler_info["scaler"]
+    feature_cols = scaler_info["feature_columns"]
+
+    # Align features
+    df = df[feature_cols].copy()
+
+    # Scale
+    X_scaled = scaler.transform(df)
+
+    # Create sequences
+    sequences = []
+    for i in range(len(X_scaled) - timesteps):
+        sequences.append(X_scaled[i:i + timesteps])
+
+    X_seq = np.array(sequences)
+    return X_seq
+
+
+
+def preprocess_for_cnn_lstm(df, scaler, feature_info, timesteps=60):
+    # Align columns
+    df = df[feature_info].copy()
+
+    #scale
+    X_scaled = scaler.transform(df)
+
+    #create time windows
+    sequences = []
+    for i in range(len(X_scaled) - timesteps):
+        sequences.append(X_scaled[i:i + timesteps])
+    
+    X_seq = np.array(sequences)
+    return X_seq
+
+
 
