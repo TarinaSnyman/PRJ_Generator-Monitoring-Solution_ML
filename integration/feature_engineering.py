@@ -194,7 +194,7 @@ def feature_engineering_air12305(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-#dispatches the feture engineered dataset for each air
+#dispatches the feture engineered dataset for each air for xgbooost
 def feature_engineering_dispatcher(df: pd.DataFrame, air_id: str) -> pd.DataFrame:
     if df.empty:
         raise ValueError(f"No data provided for AIR {air_id}")
@@ -209,24 +209,108 @@ def feature_engineering_dispatcher(df: pd.DataFrame, air_id: str) -> pd.DataFram
         return feature_engineering_air12305(df_mapped)
     else:
         raise ValueError(f"Feature engineering not defined for AIR {air_id}")
+
+################################################################################################################################
+
+# CNN LTSM feature engineering
+def feature_engineering_air12318_cnn(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    # === ON/OFF detection ===
+    if "ptot_W" in df.columns:
+        p = df["ptot_W"].clip(lower=0).fillna(0)
+        X_power = np.log1p(p).values.reshape(-1, 1)
+        gmm = GaussianMixture(n_components=2, random_state=42).fit(X_power)
+        labels = gmm.predict(X_power)
+        on_cluster = np.argmax(gmm.means_.flatten())
+        df["is_running_gmm"] = (labels == on_cluster).astype(int)
+    else:
+        df["is_running_gmm"] = 0
+
+    current_cols = [c for c in ["ia_A","ib_A","ic_A"] if c in df.columns]
+    df["any_current"] = df[current_cols].sum(axis=1) > 0.1 if current_cols else 0
+    df["is_running"] = ((df["is_running_gmm"]==1) | df["any_current"]).astype(int)
+
+    # === Feature calculations ===
+    df["current_imbalance"] = df[current_cols].std(axis=1) if len(current_cols)==3 else 0
+    df["pf_anomaly"] = np.abs(1 - df["pftot_None"]) if "pftot_None" in df.columns else 0
+
+    # Rolling stats
+    rolling_window = 60
+    for col in ["pf_anomaly"]:
+        if col in df.columns:
+            df[f"{col}_rollmean"] = df[col].rolling(rolling_window, min_periods=1).mean().fillna(0)
+            df[f"{col}_rollstd"] = df[col].rolling(rolling_window, min_periods=1).std().fillna(0)
     
-# CNN LTSM
-# load scaler once globally
+    # Fill remaining NaNs for CNN-LSTM
+    df[["current_imbalance","pf_anomaly","pf_anomaly_rollmean","pf_anomaly_rollstd"]] = \
+        df[["current_imbalance","pf_anomaly","pf_anomaly_rollmean","pf_anomaly_rollstd"]].ffill().fillna(0)
 
-def preprocess_for_cnn_lstm(df, scaler, feature_info, timesteps=60):
-    # Align columns
-    df = df[feature_info].copy()
+    # Only keep the 4 high-impact features
+    feature_cols = ["current_imbalance","pf_anomaly","pf_anomaly_rollmean","pf_anomaly_rollstd"]
+    df = df[feature_cols]
 
-    #scale
-    X_scaled = scaler.transform(df)
+    return df
 
-    #create time windows
-    sequences = []
-    for i in range(len(X_scaled) - timesteps):
-        sequences.append(X_scaled[i:i + timesteps])
-    
-    X_seq = np.array(sequences)
-    return X_seq
+def feature_engineering_air12305_cnn(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    # ON/OFF detection
+    if 'ptot_watt' in df.columns:
+        gmm = GaussianMixture(n_components=2, random_state=42)
+        labels = gmm.fit_predict(df[['ptot_watt']].fillna(0))
+        running_label = np.argmax(gmm.means_.flatten())
+        df['is_running'] = (labels == running_label).astype(int)
+    else:
+        df['is_running'] = 0
+
+    # PF anomaly
+    if 'pftot_none' in df.columns:
+        df['pf_anomaly'] = np.abs(1 - df['pftot_none'].clip(0, 1))
+    else:
+        df['pf_anomaly'] = 0
+
+    # Current imbalance
+    if all(c in df.columns for c in ['ia_ampere','ib_ampere','ic_ampere']):
+        df['current_imbalance'] = df[['ia_ampere','ib_ampere','ic_ampere']].std(axis=1) / \
+                                  df[['ia_ampere','ib_ampere','ic_ampere']].mean(axis=1)
+    else:
+        df['current_imbalance'] = 0
+
+    # Voltage imbalance (added to match XGBoost)
+    if all(c in df.columns for c in ['va_volt','vb_volt','vc_volt']):
+        df['voltage_imbalance'] = df[['va_volt','vb_volt','vc_volt']].std(axis=1)
+    else:
+        df['voltage_imbalance'] = 0
+
+    # Rolling stats (use same column names as XGBoost)
+    ROLL_WINDOW = 10
+    if 'ptot_watt' in df.columns:
+        df['ptot_watt_rollmean'] = df['ptot_watt'].rolling(ROLL_WINDOW).mean()
+        df['ptot_watt_rollstd'] = df['ptot_watt'].rolling(ROLL_WINDOW).std()
+    if 'ia_ampere' in df.columns:
+        df['ia_ampere_rollmean'] = df['ia_ampere'].rolling(ROLL_WINDOW).mean()
+        df['ia_ampere_rollstd'] = df['ia_ampere'].rolling(ROLL_WINDOW).std()
+    if 'pf_anomaly' in df.columns:
+        df['pf_anomaly_rollmean'] = df['pf_anomaly'].rolling(ROLL_WINDOW).mean()
+        df['pf_anomaly_rollstd'] = df['pf_anomaly'].rolling(ROLL_WINDOW).std()
+
+    # Fill NaNs
+    df = df.fillna(0)
+    # --- Select the 4 high-impact features for CNN-LSTM ---
+    selected_features = [
+        'current_imbalance',
+        'pf_anomaly',
+        'pf_anomaly_rollmean',
+        'pf_anomaly_rollstd'
+    ]
+
+    # Keep only available numeric features
+    available_features = [f for f in selected_features if f in df.columns and df[f].dtype in ['float64','int64']]
+    df = df[available_features].ffill().fillna(0)
+
+    return df
+
 
 def feature_engineering_dispatcher_cnnlstm(df: pd.DataFrame, air_id: str) -> pd.DataFrame:
     if df.empty:
@@ -234,10 +318,10 @@ def feature_engineering_dispatcher_cnnlstm(df: pd.DataFrame, air_id: str) -> pd.
 
     if air_id in ["12318", "Epi"]:
         df_mapped = map_influx_to_model_columns_12318(df)
-        return feature_engineering_air12318(df_mapped)
+        return feature_engineering_air12318_cnn(df_mapped)
     elif air_id in ["12300", "12305", "Military1", "Military2"]:
         df_mapped = map_influx_to_model_columns_123005(df)
-        return feature_engineering_air12305(df_mapped)
+        return feature_engineering_air12305_cnn(df_mapped)
     else:
         raise ValueError(f"CNN-LSTM feature engineering not defined for AIR {air_id}")
 
