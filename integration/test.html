@@ -98,18 +98,18 @@ async function safeFetch(endpoint) {
     }
 }
 
-// 1️⃣ Health check
+// Health check
 async function callHealth() {
     try {
         const data = await safeFetch("/health");
         document.getElementById("healthResult").innerText = JSON.stringify(data, null, 2);
-        showAlert("healthResult", "✅ Server healthy, anomaly model loaded: " + data.anomaly_model_loaded);
+        showAlert("healthResult", "✅ Server healthy " );
     } catch {
         showAlert("healthResult", "❌ Error fetching health", true);
     }
 }
 
-// 2️⃣ DB connection
+// DB connection
 async function callDBConnection() {
     try {
         const data = await safeFetch("/test_db_connection");
@@ -123,7 +123,7 @@ async function callDBConnection() {
     }
 }
 
-// 3️⃣ Fetch raw data
+// Fetch raw data
 async function callFetchData() {
     const air = document.getElementById("fetchAir").value;
     try {
@@ -134,7 +134,7 @@ async function callFetchData() {
     }
 }
 
-// 4️⃣ Feature engineering test
+// Feature engineering test
 async function callFeatures() {
     const air = document.getElementById("featureAir").value;
     try {
@@ -149,7 +149,7 @@ async function callFeatures() {
     }
 }
 
-// 5️⃣ Anomaly prediction
+// Anomaly prediction
 async function updateAnomaly() {
     const air = document.getElementById("anomalyAir").value;
     const source = document.getElementById("sourceSelect").value;
@@ -174,7 +174,7 @@ async function updateAnomaly() {
     }
 }
 
-// 6️⃣ Failure probability prediction
+// Failure probability prediction
 async function updateRUL() {
     const air = document.getElementById("rulAir").value;
     const source = document.getElementById("sourceSelectRUL").value;

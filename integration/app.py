@@ -7,8 +7,7 @@ import numpy as np
 import onnxruntime as ort
 from influxdb_client import InfluxDBClient
 from feature_engineering import (feature_engineering_dispatcher, 
-                                 feature_engineering_dispatcher_cnnlstm,
-                                 preprocess_for_cnn_lstm)
+                                 feature_engineering_dispatcher_cnnlstm)
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -33,9 +32,9 @@ cnn_lstm_model_12300 = ort.InferenceSession("../Models/cnn_lstm_pm_12300_optimiz
 cnn_lstm_model_12305 = ort.InferenceSession("../Models/cnn_lstm_pm_12305.onnx")
 cnn_lstm_model_12318 = ort.InferenceSession("../Models/cnn_lstm_pm_12318_optimized.onnx")
 
-scaler_12300=joblib.load("../Models/scaler_info_cnn_lstm_pm_12300_optimized.pkl")
-scaler_12305=joblib.load("../Models/scaler_info_cnn_lstm_pm_12305.pkl")
-scaler_12318=joblib.load("../Models/scaler_info_cnn_lstm_pm_12318_optimized.pkl")
+scaler_12300=joblib.load("../Models/scaler_cnn_lstm_pm_12300_optimized.pkl")
+scaler_12305=joblib.load("../Models/scaler_cnn_lstm_pm_12305.pkl")
+scaler_12318=joblib.load("../Models/scaler_cnn_lstm_pm_12318_optimized.pkl")
 
 # Load feature info
 features_12300 = joblib.load("../Models/feature_info_cnn_lstm_pm_12300_optimized.pkl")
@@ -60,7 +59,7 @@ class DataPoint(BaseModel):
 
 # utility:
 # fetch InfluxDB data
-def fetch_influx_data(air_id: str, start="-1h") -> pd.DataFrame:
+def fetch_influx_data(air_id: str, start="-12h") -> pd.DataFrame:
     client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
     query_api = client.query_api()
     query = f'''
@@ -96,7 +95,7 @@ def test_db_connection(x_api_key: str = Header(None)):
     try:
         client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
         df = client.query_api().query_data_frame(
-            f'from(bucket:"{INFLUX_BUCKET}") |> range(start: -1h) '
+            f'from(bucket:"{INFLUX_BUCKET}") |> range(start: -12h) '
         )
         client.close()
         return {"status": "ok", "rows_returned": len(df)}
@@ -195,7 +194,7 @@ def predict_anomaly(air_id: str, source: str = "influx", x_api_key: str = Header
             "source": source,
             "anomaly": int(pred),
             "probability": float(prob),
-            "debug": debug_info
+            # "debug": debug_info
         }
 
     except Exception as e:
@@ -208,68 +207,84 @@ def predict_anomaly(air_id: str, source: str = "influx", x_api_key: str = Header
 # # cnn ltsm model 
 
 @app.get("/predict_cnn_lstm")
-def predict_failure(air_id: str, source: str = "influx", x_api_key: str = Header(None)):
+def predict_cnn_lstm(air_id: str, source: str = "influx", x_api_key: str = Header(None)):
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     debug_info = {}
-    
+
     try:
-        # load data
-        # load data
+        # load data 
         if source == "on":
             csv_path = f"../data/simulatedData/onData/air{air_id}_SimulatedData.csv"
-            debug_info['csv_path'] = csv_path
             df_raw = pd.read_csv(csv_path)
+            debug_info['csv_path'] = csv_path
         elif source == "failing":
             csv_path = f"../data/simulatedData/onFailingData/air{air_id}_SimulatedFailingData.csv"
-            debug_info['csv_path'] = csv_path
             df_raw = pd.read_csv(csv_path)
+            debug_info['csv_path'] = csv_path
         elif source == "influx":
-            debug_info['source'] = "influx"
             df_raw = fetch_influx_data(air_id)
+            debug_info['source'] = "influx"
         else:
-            raise HTTPException(status_code=400, detail="Invalid source type. Use 'influx' or 'csv'.")
-
+            raise HTTPException(status_code=400, detail="Invalid source type. Use 'influx', 'on', or 'failing'.")
 
         if df_raw.empty:
             return {"air_id": air_id, "message": "No data available", "debug": debug_info}
+
         debug_info["raw_shape"] = df_raw.shape
 
-        # feature engineering (CNN-LSTM version)
+        # Select numeric columns 
         numeric_df = df_raw.select_dtypes(include="number")
+
+        # feature engineering 
         try:
             df_features = feature_engineering_dispatcher_cnnlstm(numeric_df, air_id)
             debug_info["features_shape"] = df_features.shape
             debug_info["features_columns"] = df_features.columns.tolist()
         except Exception as fe_err:
             debug_info["feature_engineering_error"] = str(fe_err)
-            return {"error": "Feature engineering failed", "debug": debug_info}
-        
-        # Check if we have enough rows
+            raise HTTPException(status_code=500, detail=f"Feature engineering failed: {fe_err}")
+
+        #  minimum timesteps for cnn lstm
         TIMESTEPS = 60
         if df_features.shape[0] < TIMESTEPS:
             raise HTTPException(status_code=400, detail=f"Not enough data for CNN-LSTM. Need at least {TIMESTEPS} rows.")
 
-        # Prepare input for ONNX: reshape to (1, timesteps, features)
-        X = df_features[-TIMESTEPS:].values.astype(np.float32).reshape(1, TIMESTEPS, -1)
-        debug_info["input_shape"] = X.shape
+        # Select & order 4 high-impact features 
+        selected_features = [
+            'current_imbalance',
+            'pf_anomaly',
+            'pf_anomaly_rollmean',
+            'pf_anomaly_rollstd'
+        ]
+        available_features = [f for f in selected_features if f in df_features.columns]
+        if len(available_features) < 4:
+            raise HTTPException(status_code=500, detail=f"Missing required features for CNN-LSTM: {set(selected_features)-set(available_features)}")
+        
+        df_features = df_features[selected_features].ffill().fillna(0)
 
-        # Select model
+        # Apply scaler 
         if air_id in ["12318", "Epi"]:
+            scaler = scaler_12318
             model = cnn_lstm_model_12318
         elif air_id in ["12300", "Military1"]:
+            scaler = scaler_12300
             model = cnn_lstm_model_12300
         elif air_id in ["12305", "Military2"]:
+            scaler = scaler_12305
             model = cnn_lstm_model_12305
         else:
-            raise HTTPException(status_code=400, detail=f"No model for AIR {air_id}")
+            raise HTTPException(status_code=400, detail=f"No CNN-LSTM model for AIR {air_id}")
 
-        # Run ONNX model
+        X_scaled = scaler.transform(df_features[-TIMESTEPS:])
+        X_input = X_scaled.astype(np.float32).reshape(1, TIMESTEPS, -1)
+        debug_info["input_shape"] = X_input.shape
+
+        # --- 7. Run ONNX model ---
         input_name = model.get_inputs()[0].name
-        preds = model.run(None, {input_name: X})[0][0]  # first sample, last timestep
+        preds = model.run(None, {input_name: X_input})[0][0]
 
-        # Map predictions to horizons
         failure_probs = {
             "1_hour": float(preds[0]),
             "2_hours": float(preds[1]),
@@ -281,7 +296,7 @@ def predict_failure(air_id: str, source: str = "influx", x_api_key: str = Header
             "air_id": air_id,
             "source": source,
             "failure_probabilities": failure_probs,
-            "debug": debug_info
+            # "debug": debug_info
         }
 
     except Exception as e:
