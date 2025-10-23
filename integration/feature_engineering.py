@@ -212,25 +212,6 @@ def feature_engineering_dispatcher(df: pd.DataFrame, air_id: str) -> pd.DataFram
     
 # CNN LTSM
 # load scaler once globally
-def preprocess_for_cnn_lstm(df, scaler_info, timesteps=60):
-    scaler = scaler_info["scaler"]
-    feature_cols = scaler_info["feature_columns"]
-
-    # Align features
-    df = df[feature_cols].copy()
-
-    # Scale
-    X_scaled = scaler.transform(df)
-
-    # Create sequences
-    sequences = []
-    for i in range(len(X_scaled) - timesteps):
-        sequences.append(X_scaled[i:i + timesteps])
-
-    X_seq = np.array(sequences)
-    return X_seq
-
-
 
 def preprocess_for_cnn_lstm(df, scaler, feature_info, timesteps=60):
     # Align columns
@@ -246,6 +227,19 @@ def preprocess_for_cnn_lstm(df, scaler, feature_info, timesteps=60):
     
     X_seq = np.array(sequences)
     return X_seq
+
+def feature_engineering_dispatcher_cnnlstm(df: pd.DataFrame, air_id: str) -> pd.DataFrame:
+    if df.empty:
+        raise ValueError(f"No data provided for AIR {air_id}")
+
+    if air_id in ["12318", "Epi"]:
+        df_mapped = map_influx_to_model_columns_12318(df)
+        return feature_engineering_air12318(df_mapped)
+    elif air_id in ["12300", "12305", "Military1", "Military2"]:
+        df_mapped = map_influx_to_model_columns_123005(df)
+        return feature_engineering_air12305(df_mapped)
+    else:
+        raise ValueError(f"CNN-LSTM feature engineering not defined for AIR {air_id}")
 
 
 

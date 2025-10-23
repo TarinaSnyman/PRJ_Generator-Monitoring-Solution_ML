@@ -264,7 +264,7 @@ def predict_failure(air_id: str, source: str = "influx", x_api_key: str = Header
 
         #run ONNX model
         input_name = model.get_inputs()[0].name
-        preds = model.run(None, {input_name: X.astype(np.float32)})[0][0]
+        preds = model.run(None, {input_name: X.astype(np.float32)})[0][-1]
 
         horizons = [1, 2, 4, 6]
         probabilities = {f"{h}h": float(preds[i]) for i, h in enumerate(horizons)}
